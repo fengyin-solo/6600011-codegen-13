@@ -50,6 +50,7 @@ interface EEGState {
   togglePlayback: () => void;
   setPlaybackPlaying: (playing: boolean) => void;
   fetchSleepAnalysis: (channel: string, channelData?: number[], sampleRate?: number) => Promise<void>;
+  analyzeRecordingSleep: (recording: Recording) => void;
   clearSleepAnalysis: () => void;
 }
 
@@ -223,6 +224,114 @@ export const useEEGStore = create<EEGState>((set, get) => ({
     } catch {
       set({ sleepAnalysis: null, sleepAnalysisLoading: false });
     }
+  },
+  analyzeRecordingSleep: (recording) => {
+    const frames = recording.frames;
+    if (frames.length === 0) {
+      set({ sleepAnalysis: null });
+      return;
+    }
+    const EPOCH_SEC = 30;
+    const duration = recording.duration;
+    const nEpochs = Math.max(1, Math.ceil(duration / EPOCH_SEC));
+    const META: Record<string, { label: string; level: number; color: string }> = {
+      wake: { label: '清醒', level: 0, color: '#fdd835' },
+      n1: { label: 'N1', level: 1, color: '#66bb6a' },
+      n2: { label: 'N2', level: 2, color: '#42a5f5' },
+      n3: { label: 'N3', level: 3, color: '#1a237e' },
+      rem: { label: 'REM', level: 4, color: '#ab47bc' },
+    };
+    const classify = (bp: BandPower): string => {
+      const total = bp.delta + bp.theta + bp.alpha + bp.beta + bp.gamma + 1e-10;
+      const deltaR = bp.delta / total;
+      const thetaR = bp.theta / total;
+      const alphaR = bp.alpha / total;
+      const betaR = bp.beta / total;
+      const thetaAlpha = thetaR / (alphaR + 1e-10);
+      if (betaR > 0.15 || alphaR > 0.25) return 'wake';
+      if (deltaR > 0.40) return 'n3';
+      if (thetaAlpha > 2.0 && deltaR < 0.30) return 'rem';
+      if (deltaR > 0.20 || (deltaR > 0.12 && thetaR > 0.25)) return 'n2';
+      return 'n1';
+    };
+    const stages = [];
+    for (let i = 0; i < nEpochs; i++) {
+      const epochStart = i * EPOCH_SEC;
+      const epochEnd = Math.min((i + 1) * EPOCH_SEC, duration);
+      const epochFrames = frames.filter(
+        (f) => f.relativeTime >= epochStart && f.relativeTime < epochEnd,
+      );
+      let avgBands: BandPower;
+      if (epochFrames.length > 0) {
+        const sum = epochFrames.reduce(
+          (acc, f) => ({
+            delta: acc.delta + f.bands.delta,
+            theta: acc.theta + f.bands.theta,
+            alpha: acc.alpha + f.bands.alpha,
+            beta: acc.beta + f.bands.beta,
+            gamma: acc.gamma + f.bands.gamma,
+          }),
+          { delta: 0, theta: 0, alpha: 0, beta: 0, gamma: 0 },
+        );
+        const n = epochFrames.length;
+        avgBands = {
+          delta: sum.delta / n,
+          theta: sum.theta / n,
+          alpha: sum.alpha / n,
+          beta: sum.beta / n,
+          gamma: sum.gamma / n,
+        };
+      } else {
+        const mid = (epochStart + epochEnd) / 2;
+        const nearest = frames.reduce((best, f) =>
+          Math.abs(f.relativeTime - mid) < Math.abs(best.relativeTime - mid) ? f : best,
+        );
+        avgBands = nearest.bands;
+      }
+      const stageKey = classify(avgBands);
+      const meta = META[stageKey];
+      stages.push({
+        epoch: i,
+        startTime: Math.round(epochStart * 10) / 10,
+        endTime: Math.round(epochEnd * 10) / 10,
+        stage: stageKey,
+        label: meta.label,
+        level: meta.level,
+        color: meta.color,
+        bandPower: avgBands,
+      });
+    }
+    const stageCounts: Record<string, number> = {};
+    const stageDurations: Record<string, number> = {};
+    for (const s of stages) {
+      const dur = s.endTime - s.startTime;
+      stageCounts[s.stage] = (stageCounts[s.stage] || 0) + 1;
+      stageDurations[s.stage] = (stageDurations[s.stage] || 0) + dur;
+    }
+    const totalDur = Object.values(stageDurations).reduce((a, b) => a + b, 0) + 1e-10;
+    const sleepDur = totalDur - (stageDurations['wake'] || 0);
+    const efficiency = Math.round(Math.min(100, Math.max(0, (sleepDur / totalDur) * 100)) * 10) / 10;
+    let transitions = 0;
+    for (let i = 1; i < stages.length; i++) {
+      if (stages[i].stage !== stages[i - 1].stage) transitions++;
+    }
+    const analysis: SleepAnalysis = {
+      stages,
+      summary: {
+        totalDuration: Math.round(duration * 10) / 10,
+        totalEpochs: nEpochs,
+        stageCounts,
+        stageDurations: Object.fromEntries(
+          Object.entries(stageDurations).map(([k, v]) => [k, Math.round(v * 10) / 10]),
+        ),
+        stagePercentages: Object.fromEntries(
+          Object.entries(stageDurations).map(([k, v]) => [k, Math.round((v / totalDur) * 1000) / 10]),
+        ),
+        sleepEfficiency: efficiency,
+        stageTransitions: transitions,
+      },
+    };
+    set({ sleepAnalysis: analysis });
   },
   clearSleepAnalysis: () => set({ sleepAnalysis: null }),
 }));

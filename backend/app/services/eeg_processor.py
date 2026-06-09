@@ -13,12 +13,13 @@ def generate_mock_eeg(duration_sec: float = 5.0) -> dict:
         data[ch] = sig.tolist()
     return {'channels': CHANNELS, 'sample_rate': SAMPLE_RATE, 'data': data, 'time': t.tolist(), 'duration': duration_sec}
 
-def compute_band_power(channel_data: list, sample_rate: int) -> dict:
-    freqs, psd = signal.welch(channel_data, fs=sample_rate, nperseg=256)
+def compute_band_power(channel_data, sample_rate: int) -> dict:
+    arr = np.asarray(channel_data, dtype=float)
+    freqs, psd = signal.welch(arr, fs=sample_rate, nperseg=min(256, len(arr)))
     result = {}
     for name, (low, high) in BANDS.items():
         mask = (freqs >= low) & (freqs <= high)
-        result[name] = float(np.trapz(psd[mask], freqs[mask])) if mask.any() else 0.0
+        result[name] = float(np.trapezoid(psd[mask], freqs[mask])) if mask.any() else 0.0
     return result
 
 def compute_spectrogram(channel_data: list, sample_rate: int) -> dict:
@@ -80,13 +81,13 @@ def classify_sleep_epoch(band_power: dict) -> str:
     alpha_rel = band_power['alpha'] / total
     beta_rel = band_power['beta'] / total
     theta_alpha = theta_rel / (alpha_rel + 1e-10)
-    if beta_rel > 0.25 or alpha_rel > 0.30:
+    if beta_rel > 0.15 or alpha_rel > 0.25:
         return 'wake'
-    if delta_rel > 0.45:
+    if delta_rel > 0.40:
         return 'n3'
-    if theta_alpha > 1.8 and delta_rel < 0.35:
+    if theta_alpha > 2.0 and delta_rel < 0.30:
         return 'rem'
-    if delta_rel > 0.30 or (delta_rel > 0.20 and theta_rel > 0.30):
+    if delta_rel > 0.20 or (delta_rel > 0.12 and theta_rel > 0.25):
         return 'n2'
     return 'n1'
 
@@ -141,6 +142,47 @@ def compute_sleep_analysis(channel_data: list, sample_rate: int) -> dict:
         'stageTransitions': transitions,
     }
     return {'stages': stages, 'summary': summary}
+
+
+CYCLE_PATTERN = [
+    ('wake', 0.10), ('n1', 0.10), ('n2', 0.20),
+    ('n3', 0.20), ('n2', 0.10), ('rem', 0.20), ('n1', 0.10),
+]
+
+STAGE_SIGNALS = {
+    'wake': [(0.3, 12), (0.25, 22), (0.1, 8)],
+    'n1': [(0.45, 6), (0.2, 2.5), (0.08, 10)],
+    'n2': [(0.35, 5), (0.4, 2), (0.08, 8)],
+    'n3': [(0.7, 1.5), (0.5, 3), (0.1, 0.8)],
+    'rem': [(0.5, 7), (0.3, 6.5), (0.1, 3)],
+}
+
+
+def generate_mock_sleep_eeg(duration_sec: float = 300.0) -> dict:
+    t = np.linspace(0, duration_sec, int(SAMPLE_RATE * duration_sec))
+    cycle_duration = 210
+    timeline = []
+    total = 0.0
+    while total < duration_sec:
+        for stage, frac in CYCLE_PATTERN:
+            dur = cycle_duration * frac
+            if total + dur > duration_sec:
+                dur = duration_sec - total
+            if dur > 0:
+                timeline.append((stage, total, total + dur))
+            total += dur
+            if total >= duration_sec:
+                break
+    data = {}
+    for ch in CHANNELS:
+        sig = np.zeros(len(t))
+        for stage, start, end in timeline:
+            mask = (t >= start) & (t < end)
+            for amp, freq in STAGE_SIGNALS[stage]:
+                sig[mask] += amp * np.sin(2 * np.pi * freq * t[mask])
+        sig += 0.15 * np.random.randn(len(t))
+        data[ch] = sig.tolist()
+    return {'channels': CHANNELS, 'sample_rate': SAMPLE_RATE, 'data': data, 'time': t.tolist(), 'duration': duration_sec}
 
 
 def compute_correlation(target_channel: str, all_data: dict, sample_rate: int) -> dict:

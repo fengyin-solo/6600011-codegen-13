@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useEEGStore } from '../store/eeg';
-import { SleepAnalysis, SleepStageEpoch } from '../types';
+import { SleepAnalysis, SleepStageEpoch, Recording } from '../types';
 
 const STAGE_META: Record<string, { label: string; color: string; level: number }> = {
   wake: { label: '清醒', color: '#fdd835', level: 0 },
@@ -147,8 +147,20 @@ const StageBar: React.FC<{ label: string; pct: number; color: string; duration: 
 );
 
 export const SleepAnalysisChart: React.FC = () => {
-  const { sleepAnalysis, sleepAnalysisLoading, selectedChannel, eegData, fetchSleepAnalysis, clearSleepAnalysis } = useEEGStore();
+  const {
+    sleepAnalysis,
+    sleepAnalysisLoading,
+    selectedChannel,
+    eegData,
+    fetchSleepAnalysis,
+    analyzeRecordingSleep,
+    clearSleepAnalysis,
+    playbackMode,
+    activeRecording,
+    recordings,
+  } = useEEGStore();
   const [hoverEpoch, setHoverEpoch] = useState<number | null>(null);
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState(700);
 
@@ -164,15 +176,37 @@ export const SleepAnalysisChart: React.FC = () => {
     return () => ro.disconnect();
   }, []);
 
-  const handleAnalyze = () => {
+  const getTargetRecording = (): Recording | null => {
+    if (playbackMode && activeRecording) return activeRecording;
+    if (selectedRecordingId) {
+      return recordings.find((r) => r.id === selectedRecordingId) || null;
+    }
+    return null;
+  };
+
+  const handleAnalyze = async () => {
+    const recording = getTargetRecording();
+    if (recording && recording.frames.length > 0) {
+      analyzeRecordingSleep(recording);
+      return;
+    }
     const channelData = eegData?.data?.[selectedChannel];
     const sampleRate = eegData?.sample_rate;
-    if (channelData && sampleRate) {
-      fetchSleepAnalysis(selectedChannel, channelData, sampleRate);
+    const dataLen = channelData?.length || 0;
+    const enoughData = dataLen >= 30 * (sampleRate || 256);
+    if (enoughData && channelData && sampleRate) {
+      await fetchSleepAnalysis(selectedChannel, channelData, sampleRate);
     } else {
-      fetchSleepAnalysis(selectedChannel);
+      await fetchSleepAnalysis(selectedChannel);
     }
   };
+
+  const targetRecording = getTargetRecording();
+  const dataSourceLabel = targetRecording
+    ? `录制: ${targetRecording.name}`
+    : eegData && (eegData.data?.[selectedChannel]?.length || 0) >= 30 * (eegData.sample_rate || 256)
+    ? `实时数据 (${selectedChannel})`
+    : '模拟数据 (300秒)';
 
   const hoveredStage = hoverEpoch !== null && sleepAnalysis ? sleepAnalysis.stages[hoverEpoch] : null;
 
@@ -229,6 +263,45 @@ export const SleepAnalysisChart: React.FC = () => {
         </div>
       </div>
 
+      <div style={{
+        marginBottom: '12px',
+        padding: '10px 14px',
+        background: '#f0f1f5',
+        borderRadius: '8px',
+        fontSize: '12px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: recordings.length > 0 && !playbackMode ? '8px' : 0 }}>
+          <span style={{ color: '#666' }}>数据来源:</span>
+          <span style={{ fontWeight: 600, color: targetRecording ? '#3949ab' : '#e65100' }}>{dataSourceLabel}</span>
+          {playbackMode && <span style={{ fontSize: '11px', color: '#5c6bc0', background: '#e8eaf6', padding: '2px 8px', borderRadius: '4px' }}>回放中</span>}
+        </div>
+        {recordings.length > 0 && !playbackMode && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: '#666' }}>选择录制:</span>
+            <select
+              value={selectedRecordingId || ''}
+              onChange={(e) => setSelectedRecordingId(e.target.value || null)}
+              style={{
+                flex: 1,
+                padding: '4px 8px',
+                border: '1px solid #d0d0d0',
+                borderRadius: '4px',
+                fontSize: '12px',
+                background: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              <option value="">自动 (模拟数据)</option>
+              {recordings.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} ({Math.floor(r.duration / 60)}分{Math.floor(r.duration % 60)}秒, {r.frames.length}帧)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
       {!sleepAnalysis && !sleepAnalysisLoading && (
         <div style={{
           padding: '48px 24px',
@@ -241,7 +314,9 @@ export const SleepAnalysisChart: React.FC = () => {
           <div style={{ fontSize: '36px', marginBottom: '12px' }}>😴</div>
           <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>点击"开始分析"查看睡眠阶段变化概览</div>
           <div style={{ fontSize: '12px', color: '#bbb' }}>
-            将对当前通道 ({selectedChannel}) 的脑电数据进行30秒分帧睡眠分期
+            {targetRecording
+              ? `将分析录制「${targetRecording.name}」的脑电数据 (${Math.floor(targetRecording.duration / 60)}分${Math.floor(targetRecording.duration % 60)}秒)`
+              : `将使用模拟数据生成300秒睡眠分期结果`}
           </div>
         </div>
       )}

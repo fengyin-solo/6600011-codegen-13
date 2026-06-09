@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from ..services.eeg_processor import generate_mock_eeg, compute_band_power, compute_spectrogram, compute_brain_state, compute_correlation, compute_sleep_analysis, SAMPLE_RATE
+from ..services.eeg_processor import generate_mock_eeg, compute_band_power, compute_spectrogram, compute_brain_state, compute_correlation, compute_sleep_analysis, generate_mock_sleep_eeg, SAMPLE_RATE
 
 router = APIRouter(prefix="/eeg", tags=["eeg"])
 
@@ -62,7 +62,7 @@ async def sleep_analysis(payload: dict):
     if channel_data and isinstance(channel_data, list) and len(channel_data) > 0:
         return compute_sleep_analysis(channel_data, sample_rate)
     duration = payload.get('duration', 300.0)
-    data = generate_mock_eeg(duration)
+    data = generate_mock_sleep_eeg(duration)
     if channel not in data['data']:
         return {'error': 'Channel not found'}
     return compute_sleep_analysis(data['data'][channel], SAMPLE_RATE)
