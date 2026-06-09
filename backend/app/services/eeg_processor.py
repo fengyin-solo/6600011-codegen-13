@@ -1,9 +1,13 @@
 import numpy as np
 from scipy import signal
+import csv
+import io
+import json
 
 CHANNELS = ['Fp1','Fp2','F3','F4','C3','C4','P3','P4','O1','O2']
 SAMPLE_RATE = 256
 BANDS = {'delta': (0.5,4), 'theta': (4,8), 'alpha': (8,13), 'beta': (13,30), 'gamma': (30,100)}
+FRAME_SEC = 3
 
 def generate_mock_eeg(duration_sec: float = 5.0) -> dict:
     t = np.linspace(0, duration_sec, int(SAMPLE_RATE * duration_sec))
@@ -183,6 +187,142 @@ def generate_mock_sleep_eeg(duration_sec: float = 300.0) -> dict:
         sig += 0.15 * np.random.randn(len(t))
         data[ch] = sig.tolist()
     return {'channels': CHANNELS, 'sample_rate': SAMPLE_RATE, 'data': data, 'time': t.tolist(), 'duration': duration_sec}
+
+
+def parse_csv_eeg(content: str) -> dict:
+    reader = csv.reader(io.StringIO(content))
+    rows = list(reader)
+    if not rows:
+        return None
+    header = [h.strip() for h in rows[0]]
+    data = {}
+    time_col = None
+    for i, h in enumerate(header):
+        low = h.lower()
+        if low in ('time', 't', 'timestamp', 'time(s)', 'time_sec'):
+            time_col = i
+            continue
+        if low in ('sample_rate', 'fs', 'sr'):
+            continue
+        data[h] = []
+    if not data:
+        first_row_vals = rows[1] if len(rows) > 1 else rows[0]
+        for i in range(len(first_row_vals)):
+            key = f"ch{i}"
+            data[key] = []
+        for row in rows:
+            for i, val in enumerate(row):
+                if i in data:
+                    try:
+                        data[f"ch{i}"].append(float(val))
+                    except (ValueError, IndexError):
+                        pass
+                elif f"ch{i}" in data:
+                    try:
+                        data[f"ch{i}"].append(float(val))
+                    except (ValueError, IndexError):
+                        pass
+    else:
+        for row in rows[1:]:
+            for i, h in enumerate(header):
+                if i == time_col:
+                    continue
+                if h in data:
+                    try:
+                        data[h].append(float(row[i]))
+                    except (ValueError, IndexError):
+                        pass
+    channels = list(data.keys())
+    for ch in channels:
+        data[ch] = [v for v in data[ch] if v is not None]
+    min_len = min(len(v) for v in data.values()) if data else 0
+    for ch in channels:
+        data[ch] = data[ch][:min_len]
+    if min_len == 0:
+        return None
+    return {'channels': channels, 'sample_rate': SAMPLE_RATE, 'data': data, 'duration': min_len / SAMPLE_RATE}
+
+
+def parse_json_eeg(content: str) -> dict:
+    obj = json.loads(content)
+    channels = obj.get('channels', [])
+    sample_rate = obj.get('sample_rate', obj.get('sampleRate', SAMPLE_RATE))
+    raw_data = obj.get('data', {})
+    if isinstance(raw_data, list):
+        arr = np.asarray(raw_data, dtype=float)
+        if arr.ndim == 1:
+            raw_data = {'ch0': arr.tolist()}
+        elif arr.ndim == 2:
+            if not channels:
+                channels = [f'ch{i}' for i in range(arr.shape[1] if arr.shape[1] > 1 else 1)]
+            if arr.shape[0] < arr.shape[1] and len(channels) == arr.shape[0]:
+                raw_data = {channels[i]: arr[i].tolist() for i in range(len(channels))}
+            else:
+                n_ch = arr.shape[1] if arr.ndim == 2 else 1
+                if not channels:
+                    channels = [f'ch{i}' for i in range(n_ch)]
+                raw_data = {channels[i]: arr[:, i].tolist() for i in range(n_ch)}
+    if not raw_data:
+        return None
+    if not channels:
+        channels = list(raw_data.keys())
+    min_len = min(len(v) for v in raw_data.values())
+    data = {ch: raw_data[ch][:min_len] for ch in channels}
+    return {'channels': channels, 'sample_rate': sample_rate, 'data': data, 'duration': min_len / sample_rate}
+
+
+def import_eeg_to_recording(content: str, filename: str, channel: str = None) -> dict:
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'json'
+    if ext == 'csv':
+        parsed = parse_csv_eeg(content)
+    else:
+        try:
+            parsed = parse_json_eeg(content)
+        except (json.JSONDecodeError, ValueError):
+            parsed = parse_csv_eeg(content)
+    if not parsed or not parsed['data']:
+        return {'error': '无法解析文件，请确认格式为 CSV 或 JSON'}
+    channels = parsed['channels']
+    sr = parsed['sample_rate']
+    target_ch = channel if channel and channel in parsed['data'] else channels[0]
+    ch_data = parsed['data'][target_ch]
+    total_samples = len(ch_data)
+    duration = total_samples / sr
+    frame_samples = FRAME_SEC * sr
+    n_frames = max(1, total_samples // frame_samples)
+    import time as _time
+    now_ms = int(_time.time() * 1000)
+    frames = []
+    for i in range(n_frames):
+        start = i * frame_samples
+        end = min(start + frame_samples, total_samples)
+        frame_data = ch_data[start:end]
+        frame_eeg_data = {target_ch: frame_data}
+        bp = compute_band_power(frame_data, sr)
+        bs = compute_brain_state(frame_data, sr)
+        frames.append({
+            'relativeTime': round(i * FRAME_SEC, 2),
+            'eeg': {
+                'channels': [target_ch],
+                'sample_rate': sr,
+                'data': frame_eeg_data,
+                'time': [round(t / sr, 4) for t in range(len(frame_data))],
+                'duration': FRAME_SEC,
+            },
+            'bands': bp,
+            'brainState': bs,
+        })
+    sleep_result = compute_sleep_analysis(ch_data, sr)
+    recording = {
+        'id': f'imp_{now_ms}',
+        'name': filename,
+        'channel': target_ch,
+        'startTime': now_ms - int(duration * 1000),
+        'endTime': now_ms,
+        'duration': round(duration, 1),
+        'frames': frames,
+    }
+    return {'recording': recording, 'sleepAnalysis': sleep_result, 'channels': channels}
 
 
 def compute_correlation(target_channel: str, all_data: dict, sample_rate: int) -> dict:

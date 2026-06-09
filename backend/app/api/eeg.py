@@ -1,5 +1,5 @@
-from fastapi import APIRouter
-from ..services.eeg_processor import generate_mock_eeg, compute_band_power, compute_spectrogram, compute_brain_state, compute_correlation, compute_sleep_analysis, generate_mock_sleep_eeg, SAMPLE_RATE
+from fastapi import APIRouter, UploadFile, File, Form
+from ..services.eeg_processor import generate_mock_eeg, compute_band_power, compute_spectrogram, compute_brain_state, compute_correlation, compute_sleep_analysis, generate_mock_sleep_eeg, import_eeg_to_recording, SAMPLE_RATE
 
 router = APIRouter(prefix="/eeg", tags=["eeg"])
 
@@ -66,3 +66,9 @@ async def sleep_analysis(payload: dict):
     if channel not in data['data']:
         return {'error': 'Channel not found'}
     return compute_sleep_analysis(data['data'][channel], SAMPLE_RATE)
+
+@router.post("/import")
+async def import_eeg(file: UploadFile = File(...), channel: str = Form(None)):
+    content = (await file.read()).decode('utf-8', errors='replace')
+    result = import_eeg_to_recording(content, file.filename or 'unknown.csv', channel)
+    return result

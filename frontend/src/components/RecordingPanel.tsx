@@ -40,13 +40,16 @@ export const RecordingPanel: React.FC = () => {
     togglePlayback,
     setPlaybackPlaying,
     selectedChannel,
+    importEEGRecording,
   } = useEEGStore();
 
   const [recordingName, setRecordingName] = useState('');
   const [showNameDialog, setShowNameDialog] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [importing, setImporting] = useState(false);
   const timerRef = useRef<number | null>(null);
   const playbackTimerRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isRecording) {
@@ -131,6 +134,18 @@ export const RecordingPanel: React.FC = () => {
     setPlaybackTime(time);
   };
 
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      await importEEGRecording(file);
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div style={{ padding: '16px', background: '#fff', borderRadius: '12px', margin: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
       <h3 style={{ margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -141,30 +156,63 @@ export const RecordingPanel: React.FC = () => {
       {!playbackMode && (
         <div style={{ marginBottom: '16px' }}>
           {!isRecording ? (
-            <button
-              onClick={handleStartRecording}
-              style={{
-                width: '100%',
-                padding: '12px',
-                background: 'linear-gradient(135deg, #d32f2f, #b71c1c)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '8px',
-                fontSize: '14px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                transition: 'transform 0.2s',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.02)')}
-              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            >
-              <span style={{ fontSize: '16px' }}>⏺</span>
-              开始录制 ({CHANNEL_NAMES[selectedChannel] || selectedChannel})
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={handleStartRecording}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  background: 'linear-gradient(135deg, #d32f2f, #b71c1c)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  transition: 'transform 0.2s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.02)')}
+                onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+              >
+                <span style={{ fontSize: '16px' }}>⏺</span>
+                开始录制 ({CHANNEL_NAMES[selectedChannel] || selectedChannel})
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.json,.txt"
+                onChange={handleFileImport}
+                style={{ display: 'none' }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                style={{
+                  padding: '12px 16px',
+                  background: importing ? '#ccc' : 'linear-gradient(135deg, #43a047, #2e7d32)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: importing ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                  transition: 'transform 0.2s',
+                }}
+                onMouseEnter={(e) => !importing && (e.currentTarget.style.transform = 'scale(1.02)')}
+                onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+              >
+                {importing ? '⟳' : '📁'} 导入
+              </button>
+            </div>
           ) : (
             <div>
               <div style={{

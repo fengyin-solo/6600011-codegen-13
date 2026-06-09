@@ -154,6 +154,7 @@ export const SleepAnalysisChart: React.FC = () => {
     eegData,
     fetchSleepAnalysis,
     analyzeRecordingSleep,
+    importEEGRecording,
     clearSleepAnalysis,
     playbackMode,
     activeRecording,
@@ -161,6 +162,9 @@ export const SleepAnalysisChart: React.FC = () => {
   } = useEEGStore();
   const [hoverEpoch, setHoverEpoch] = useState<number | null>(null);
   const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState(700);
 
@@ -201,6 +205,24 @@ export const SleepAnalysisChart: React.FC = () => {
     }
   };
 
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportError(null);
+    setImporting(true);
+    try {
+      const recording = await importEEGRecording(file);
+      if (!recording) {
+        setImportError('导入失败，请确认文件格式为 CSV 或 JSON');
+      }
+    } catch {
+      setImportError('导入出错，请重试');
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const targetRecording = getTargetRecording();
   const dataSourceLabel = targetRecording
     ? `录制: ${targetRecording.name}`
@@ -218,6 +240,39 @@ export const SleepAnalysisChart: React.FC = () => {
           睡眠片段分析
         </h3>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.json,.txt"
+            onChange={handleFileImport}
+            style={{ display: 'none' }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing || sleepAnalysisLoading}
+            style={{
+              padding: '6px 14px',
+              background: importing ? '#ccc' : 'linear-gradient(135deg, #43a047, #2e7d32)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: importing ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            {importing ? (
+              <>
+                <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
+                导入中...
+              </>
+            ) : (
+              <>📁 导入脑电记录</>
+            )}
+          </button>
           {sleepAnalysis && (
             <button
               onClick={clearSleepAnalysis}
@@ -302,6 +357,29 @@ export const SleepAnalysisChart: React.FC = () => {
         )}
       </div>
 
+      {importError && (
+        <div style={{
+          marginBottom: '12px',
+          padding: '10px 14px',
+          background: '#ffebee',
+          border: '1px solid #ef9a9a',
+          borderRadius: '8px',
+          fontSize: '12px',
+          color: '#c62828',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <span>{importError}</span>
+          <button
+            onClick={() => setImportError(null)}
+            style={{ background: 'none', border: 'none', color: '#c62828', cursor: 'pointer', fontSize: '14px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {!sleepAnalysis && !sleepAnalysisLoading && (
         <div style={{
           padding: '48px 24px',
@@ -312,11 +390,11 @@ export const SleepAnalysisChart: React.FC = () => {
           background: '#fafbfc',
         }}>
           <div style={{ fontSize: '36px', marginBottom: '12px' }}>😴</div>
-          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>点击"开始分析"查看睡眠阶段变化概览</div>
-          <div style={{ fontSize: '12px', color: '#bbb' }}>
+          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>点击"导入脑电记录"或"开始分析"查看睡眠阶段变化概览</div>
+          <div style={{ fontSize: '12px', color: '#bbb', lineHeight: '1.6' }}>
             {targetRecording
               ? `将分析录制「${targetRecording.name}」的脑电数据 (${Math.floor(targetRecording.duration / 60)}分${Math.floor(targetRecording.duration % 60)}秒)`
-              : `将使用模拟数据生成300秒睡眠分期结果`}
+              : '支持导入 CSV / JSON 格式的脑电数据文件，自动进行睡眠分期分析'}
           </div>
         </div>
       )}

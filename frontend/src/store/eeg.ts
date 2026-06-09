@@ -51,6 +51,7 @@ interface EEGState {
   setPlaybackPlaying: (playing: boolean) => void;
   fetchSleepAnalysis: (channel: string, channelData?: number[], sampleRate?: number) => Promise<void>;
   analyzeRecordingSleep: (recording: Recording) => void;
+  importEEGRecording: (file: File, channel?: string) => Promise<Recording | null>;
   clearSleepAnalysis: () => void;
 }
 
@@ -332,6 +333,46 @@ export const useEEGStore = create<EEGState>((set, get) => ({
       },
     };
     set({ sleepAnalysis: analysis });
+  },
+  importEEGRecording: async (file, channel) => {
+    set({ sleepAnalysisLoading: true });
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (channel) formData.append('channel', channel);
+      const res = await fetch('/api/eeg/import', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.error) {
+        set({ sleepAnalysisLoading: false });
+        return null;
+      }
+      const recording: Recording = data.recording;
+      const sleepResult: SleepAnalysis = data.sleepAnalysis;
+      const recordings = [...get().recordings, recording];
+      saveRecordings(recordings);
+      set({
+        recordings,
+        sleepAnalysis: sleepResult,
+        sleepAnalysisLoading: false,
+        playbackMode: true,
+        activeRecording: recording,
+        playbackState: {
+          isPlaying: false,
+          currentTime: 0,
+          currentFrame: recording.frames[0] || null,
+        },
+        eegData: recording.frames[0]?.eeg || null,
+        bandPower: recording.frames[0]?.bands || null,
+        brainState: recording.frames[0]?.brainState || null,
+      });
+      return recording;
+    } catch {
+      set({ sleepAnalysisLoading: false });
+      return null;
+    }
   },
   clearSleepAnalysis: () => set({ sleepAnalysis: null }),
 }));
