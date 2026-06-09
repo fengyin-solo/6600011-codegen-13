@@ -42,3 +42,29 @@ export interface PlaybackState {
   currentTime: number;
   currentFrame: RecordingFrame | null;
 }
+
+export interface SleepStageEpoch {
+  epoch: number;
+  startTime: number;
+  endTime: number;
+  stage: string;
+  label: string;
+  level: number;
+  color: string;
+  bandPower: BandPower;
+}
+
+export interface SleepSummary {
+  totalDuration: number;
+  totalEpochs: number;
+  stageCounts: Record<string, number>;
+  stageDurations: Record<string, number>;
+  stagePercentages: Record<string, number>;
+  sleepEfficiency: number;
+  stageTransitions: number;
+}
+
+export interface SleepAnalysis {
+  stages: SleepStageEpoch[];
+  summary: SleepSummary;
+}

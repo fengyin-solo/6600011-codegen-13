@@ -62,6 +62,87 @@ def compute_brain_state(channel_data: list, sample_rate: int) -> dict:
         'timestamp': int(time.time() * 1000)
     }
 
+SLEEP_STAGES = {
+    'wake': {'label': '清醒', 'level': 0, 'color': '#fdd835'},
+    'n1': {'label': 'N1', 'level': 1, 'color': '#66bb6a'},
+    'n2': {'label': 'N2', 'level': 2, 'color': '#42a5f5'},
+    'n3': {'label': 'N3', 'level': 3, 'color': '#1a237e'},
+    'rem': {'label': 'REM', 'level': 4, 'color': '#ab47bc'},
+}
+
+SLEEP_EPOCH_SEC = 30
+
+
+def classify_sleep_epoch(band_power: dict) -> str:
+    total = sum(band_power.values()) + 1e-10
+    delta_rel = band_power['delta'] / total
+    theta_rel = band_power['theta'] / total
+    alpha_rel = band_power['alpha'] / total
+    beta_rel = band_power['beta'] / total
+    theta_alpha = theta_rel / (alpha_rel + 1e-10)
+    if beta_rel > 0.25 or alpha_rel > 0.30:
+        return 'wake'
+    if delta_rel > 0.45:
+        return 'n3'
+    if theta_alpha > 1.8 and delta_rel < 0.35:
+        return 'rem'
+    if delta_rel > 0.30 or (delta_rel > 0.20 and theta_rel > 0.30):
+        return 'n2'
+    return 'n1'
+
+
+def compute_sleep_analysis(channel_data: list, sample_rate: int) -> dict:
+    epoch_samples = SLEEP_EPOCH_SEC * sample_rate
+    total_samples = len(channel_data)
+    n_epochs = total_samples // epoch_samples
+    if n_epochs == 0:
+        n_epochs = 1
+        epoch_samples = total_samples
+    stages = []
+    for i in range(n_epochs):
+        start = i * epoch_samples
+        end = min(start + epoch_samples, total_samples)
+        epoch_data = channel_data[start:end]
+        bp = compute_band_power(epoch_data, sample_rate)
+        stage_key = classify_sleep_epoch(bp)
+        stages.append({
+            'epoch': i,
+            'startTime': round(i * SLEEP_EPOCH_SEC, 1),
+            'endTime': round(min((i + 1) * SLEEP_EPOCH_SEC, total_samples / sample_rate), 1),
+            'stage': stage_key,
+            'label': SLEEP_STAGES[stage_key]['label'],
+            'level': SLEEP_STAGES[stage_key]['level'],
+            'color': SLEEP_STAGES[stage_key]['color'],
+            'bandPower': bp,
+        })
+    stage_counts = {}
+    stage_durations = {}
+    for s in stages:
+        key = s['stage']
+        dur = s['endTime'] - s['startTime']
+        stage_counts[key] = stage_counts.get(key, 0) + 1
+        stage_durations[key] = stage_durations.get(key, 0.0) + dur
+    total_dur = sum(stage_durations.values()) + 1e-10
+    efficiency = 0.0
+    if total_dur > 0:
+        sleep_dur = total_dur - stage_durations.get('wake', 0.0)
+        efficiency = round(min(100.0, max(0.0, sleep_dur / total_dur * 100)), 1)
+    transitions = 0
+    for i in range(1, len(stages)):
+        if stages[i]['stage'] != stages[i - 1]['stage']:
+            transitions += 1
+    summary = {
+        'totalDuration': round(total_samples / sample_rate, 1),
+        'totalEpochs': n_epochs,
+        'stageCounts': stage_counts,
+        'stageDurations': {k: round(v, 1) for k, v in stage_durations.items()},
+        'stagePercentages': {k: round(v / total_dur * 100, 1) for k, v in stage_durations.items()},
+        'sleepEfficiency': efficiency,
+        'stageTransitions': transitions,
+    }
+    return {'stages': stages, 'summary': summary}
+
+
 def compute_correlation(target_channel: str, all_data: dict, sample_rate: int) -> dict:
     target_data = np.array(all_data[target_channel])
     correlations = []

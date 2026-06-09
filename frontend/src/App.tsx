@@ -5,6 +5,7 @@ import { ChannelSelector } from './components/ChannelSelector';
 import { BrainStateDashboard } from './components/BrainStateDashboard';
 import { CorrelationChart } from './components/CorrelationChart';
 import { RecordingPanel } from './components/RecordingPanel';
+import { SleepAnalysisChart } from './components/SleepAnalysisChart';
 
 const App: React.FC = () => (
   <div style={{ display: 'flex', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -20,6 +21,7 @@ const App: React.FC = () => (
         <div style={{ flex: '1 1 600px', minWidth: 0 }}>
           <WaveformChart />
           <BandPowerChart />
+          <SleepAnalysisChart />
           <CorrelationChart />
         </div>
         <div style={{ flex: '0 0 340px', maxWidth: '400px' }}>

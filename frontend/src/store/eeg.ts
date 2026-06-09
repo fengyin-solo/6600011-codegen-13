@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { EEGData, BandPower, BrainState, CorrelationData, Recording, RecordingFrame, PlaybackState } from '../types';
+import { EEGData, BandPower, BrainState, CorrelationData, Recording, RecordingFrame, PlaybackState, SleepAnalysis } from '../types';
 
 const STORAGE_KEY = 'eeg_recordings';
 
@@ -32,6 +32,8 @@ interface EEGState {
   playbackMode: boolean;
   activeRecording: Recording | null;
   playbackState: PlaybackState;
+  sleepAnalysis: SleepAnalysis | null;
+  sleepAnalysisLoading: boolean;
   setEEGData: (d: EEGData | null) => void;
   setChannel: (c: string) => void;
   setBandPower: (b: BandPower | null) => void;
@@ -47,6 +49,8 @@ interface EEGState {
   setPlaybackTime: (time: number) => void;
   togglePlayback: () => void;
   setPlaybackPlaying: (playing: boolean) => void;
+  fetchSleepAnalysis: (channel: string, channelData?: number[], sampleRate?: number) => Promise<void>;
+  clearSleepAnalysis: () => void;
 }
 
 export const useEEGStore = create<EEGState>((set, get) => ({
@@ -67,6 +71,8 @@ export const useEEGStore = create<EEGState>((set, get) => ({
     currentTime: 0,
     currentFrame: null,
   },
+  sleepAnalysis: null,
+  sleepAnalysisLoading: false,
   setEEGData: (d) => set({ eegData: d }),
   setChannel: (c) => set({ selectedChannel: c }),
   setBandPower: (b) => set({ bandPower: b }),
@@ -193,4 +199,30 @@ export const useEEGStore = create<EEGState>((set, get) => ({
       },
     });
   },
+  fetchSleepAnalysis: async (channel, channelData, sampleRate) => {
+    set({ sleepAnalysisLoading: true });
+    try {
+      const body: Record<string, unknown> = { channel };
+      if (channelData && sampleRate) {
+        body.channelData = channelData;
+        body.sampleRate = sampleRate;
+      } else {
+        body.duration = 300;
+      }
+      const res = await fetch('/api/eeg/sleep-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.stages) {
+        set({ sleepAnalysis: data, sleepAnalysisLoading: false });
+      } else {
+        set({ sleepAnalysis: null, sleepAnalysisLoading: false });
+      }
+    } catch {
+      set({ sleepAnalysis: null, sleepAnalysisLoading: false });
+    }
+  },
+  clearSleepAnalysis: () => set({ sleepAnalysis: null }),
 }));
